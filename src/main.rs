@@ -24,7 +24,6 @@ fn main() {
             }
         }
     }
-    println!("Hello, world!");
 }
 
 fn parse_request(request: &mut [u8]) -> String {
@@ -33,7 +32,6 @@ fn parse_request(request: &mut [u8]) -> String {
 
     let mut response: String = String::from("");
     if request.starts_with(get) {
-        println!("We are working with a get request.");
         response = format!("{}{}", build_headers(), build_response());
     } else {
         println!("{}", String::from_utf8_lossy(&request[..]));
@@ -43,10 +41,9 @@ fn parse_request(request: &mut [u8]) -> String {
 }
 
 fn build_response() -> String {
-    let response: String = String::from("Yo this a body");
+    let response: String = String::from("<!DOCTYPE html><html><head><title>GET response</title></head><body>Yo this a body</body></html>");
     let content_type: String = String::from("Content-Type: text/html\r\n");
     let content_length: String = format!("Content-Length: {}\r\n\r\n", response.len());
-
 
     return format!("{}{}{}", content_type, content_length, response);
 }
