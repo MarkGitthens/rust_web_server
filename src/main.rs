@@ -40,6 +40,7 @@ fn main() {
     }
 }
 
+//TODO: This will probably have to change for handling chunked data.
 fn parse_http_message(request: &mut [u8]) {
     let request_body: String = format!("{}", String::from_utf8_lossy(&request[..]));
     let message_data: Vec<&str> = request_body.split("\r\n\r\n").collect::<Vec<&str>>();
@@ -50,7 +51,8 @@ fn parse_http_message(request: &mut [u8]) {
         let message_object: HttpMessage = result.1;
 
         println!("{:?}\n\n{:?}", message_object.status_line, message_object.header_fields);
-            //TODO: This will probably have to change for handling chunked data.
+        
+        //TODO: determine if we need to handle payload data or not
         //let _data: &str = message_data[1];
     }
 }
@@ -68,6 +70,8 @@ fn parse_header_information(headers: &str) -> (bool, HttpMessage) {
 
     let start: Vec<&str> = header_lines.pop().unwrap().split(" ").collect();
 
+    //TODO: Add sanity checking and return proper error code if invalid data
+    //TODO: Add logic to determine if this is a request or a response message
     let mut result: HttpMessage = HttpMessage {
         status_line: RequestLine { 
                         method: String::from(start[0]),
@@ -75,20 +79,14 @@ fn parse_header_information(headers: &str) -> (bool, HttpMessage) {
                         version: String::from(start[2]), },
         header_fields: HashMap::new(),
     };
-    //TODO: Add sanity checking and return proper error code if invalid data
-    //TODO: Add logic to determine if this is a request or a response message
-
-    //println!("{:?}", req_line);
 
     while !header_lines.is_empty(){
-        //TODO: do further parsing on headers here.
         let field: Option<&str> = header_lines.pop();
         match field {
             Some(res) => {
                 //TODO: Can't split on : because some fields use this character in the field value
                 //Fix probably involves recombining the result of split from [1..end] for a generic field
                 //Need to determine if all fields can use : as a valid character or if only a select few can
-                
                 let split_field: Vec<&str> = res.split(":").collect();
                 result.header_fields.insert(String::from(split_field[0]), String::from(split_field[1]));
             },
@@ -99,9 +97,8 @@ fn parse_header_information(headers: &str) -> (bool, HttpMessage) {
     return (false, result);
 }
 
-//Method used for testing receiving and responding to a request
+//Temporary helper function for testing
 fn parse_request(request: &mut [u8]) -> String {
-    //TODO: check for other http methods (post, put, head, delete, patch, options)
     let get = b"GET / HTTP/1.1\r\n";
 
     let mut response: String = String::from("");
@@ -114,6 +111,7 @@ fn parse_request(request: &mut [u8]) -> String {
     return response;
 }
 
+//Temporary helper function for testing
 fn build_response() -> String {
     let response: String = String::from("<!DOCTYPE html><html><head><title>GET response</title></head><body>Yo this a body</body></html>");
     let content_type: String = String::from("Content-Type: text/html\r\n");
@@ -122,6 +120,7 @@ fn build_response() -> String {
     return format!("{}{}{}", content_type, content_length, response);
 }
 
+//Temporary helper function for testing
 fn build_headers() -> String {
     let status_line: String = String::from("HTTP/1.1 200 OK\r\n");
     let header_line: String = String::from("Server: rust_test\r\n");
