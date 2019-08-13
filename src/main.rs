@@ -2,6 +2,7 @@ use std::io::prelude::*;
 use std::net::TcpListener;
 use std::net::TcpStream;
 
+#[derive(Debug)]
 struct RequestLine {
     method: String,
     target: String,
@@ -47,7 +48,7 @@ fn parse_http_message(request: &mut [u8]) {
 //TODO: This should probably instead return whether the headers were valid or not.
 //Parses the header information and returns true if we should parse the data payload.
 fn parse_header_information(headers: &str) -> bool {    
-    let header_lines: Vec<&str> = headers.split("\n").collect();
+    let header_lines: Vec<&str> = headers.split("\r\n").collect();
     let start_line: Vec<&str> = header_lines[0].split(" ").collect();
 
     //TODO: Add sanity checking and return proper error code if invalid data
@@ -55,6 +56,8 @@ fn parse_header_information(headers: &str) -> bool {
                                     method: String::from(start_line[0]),
                                     target: String::from(start_line[1]),
                                     version: String::from(start_line[2]), };
+
+    println!("{:?}", req_line);
     return false;
 }
 
