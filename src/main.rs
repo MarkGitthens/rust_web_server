@@ -3,17 +3,38 @@ use std::net::TcpListener;
 use std::net::TcpStream;
 use std::collections::HashMap;
 
-//TODO: Determine what fields should be nullable and update to be of type Option<T>
+#[derive(Debug)]
+enum RequestMethod {
+    GET,
+    HEAD,
+    POST,
+    PUT,
+    DELETE,
+    CONNECT,
+    OPTIONS,
+    TRACE,
+    PATCH,
+    UNKNOWN,
+}
+
 #[derive(Debug)]
 struct RequestLine {
-    method: String,
+    method: RequestMethod,
     target: String,
     version: String,
 }
 
 #[derive(Debug)]
+struct ResponseLine {
+    http_version: String,
+    status_code: u8,
+    reason_phrase: String,
+}
+
+#[derive(Debug)]
 struct HttpHeaderInformation {
-    status_line: RequestLine,
+    request_line: Option<RequestLine>,
+    response_line: Option<ResponseLine>,
     header_fields: HashMap<String, String>,
 }
 
@@ -58,9 +79,13 @@ fn parse_http_message(request: &mut [u8]) {
     let result: (bool, HttpHeaderInformation) = parse_header_information(split_message[0]);
 
     let message_object: HttpMessage = if result.0 {
+        let length: usize = result.1.header_fields.get("Content-Length").unwrap().parse().unwrap();
+        let mut data: String = String::from(split_message[1]);
+        data.truncate(length);
+        
         HttpMessage {
             header_info: result.1,
-            payload: Some(String::from(split_message[1])),
+            payload: Some(data),
         }
     } else {
         HttpMessage {
@@ -71,27 +96,61 @@ fn parse_http_message(request: &mut [u8]) {
 
     match message_object.payload {
         Some(payload) => {println!("{:?}\r\n\r\n{:?}", message_object.header_info, payload);},
-        None => {println!("{:?}", message_object.header_info);},
+        None => {},
     }
 }
 
 fn parse_header_information(headers: &str) -> (bool, HttpHeaderInformation) {
-
     //Reverse vector so that we can use it as a stack to simplify processing
     let mut header_lines: Vec<&str> = headers.split("\r\n").collect();    
     header_lines.reverse();
 
     let start: Vec<&str> = header_lines.pop().unwrap().split(" ").collect();
 
+    //TODO: Probably don't need to initialize both of these
+    let mut _request_line: RequestLine = RequestLine {
+        method: RequestMethod::UNKNOWN,
+        target: String::from(""),
+        version: String::from(""),
+    };
+
+    let mut _response_line: ResponseLine = ResponseLine {
+        http_version: String::from(""),
+        status_code: 0,
+        reason_phrase: String::from(""),
+    };
+ 
+    //TODO: Maybe setup a basic callback system that gets triggered here.
+    match start[0] {
+        "GET" => {_request_line.method = RequestMethod::GET;}
+        "HEAD" => { _request_line.method = RequestMethod::HEAD;}
+        "POST" => { _request_line.method = RequestMethod::POST;}
+        "PUT" => { _request_line.method = RequestMethod::PUT;}
+        "DELETE" => { _request_line.method = RequestMethod::DELETE;}
+        "CONNECT" => { _request_line.method = RequestMethod::CONNECT;}
+        "OPTIONS" => { _request_line.method = RequestMethod::OPTIONS;}
+        "TRACE" => { _request_line.method = RequestMethod::TRACE;}
+        "PATCH" => { _request_line.method = RequestMethod::PATCH;}
+        _ => { /*Stub case*/ }
+    };
+
     //TODO: Add sanity checking and return proper error code if invalid data
     //TODO: Add logic to determine if this is a request or a response message
     let mut result: HttpHeaderInformation = HttpHeaderInformation {
-        status_line: RequestLine { 
-            method: String::from(start[0]),
-            target: String::from(start[1]),
-            version: String::from(start[2]), },
+        request_line: None,
+        response_line: None,
         header_fields: HashMap::new(),
     };
+
+    match _request_line.method {
+        RequestMethod::UNKNOWN => {/*TODO: We are a response, or invalid*/}
+        _ => { 
+            _request_line.target = String::from(start[1]);
+            _request_line.version = String::from(start[2]); 
+        
+            result.request_line = Some(_request_line);
+        }
+    }
 
     while !header_lines.is_empty(){
         let field: Option<&str> = header_lines.pop();
@@ -107,20 +166,20 @@ fn parse_header_information(headers: &str) -> (bool, HttpHeaderInformation) {
         }
     }
 
-    //Default to return false since we aren't yet checking if we need to process a payload or not
-    return (false, result);
+    match result.header_fields.get("Content-Length") {
+        Some(_x) => return (true, result),
+        None => return (false, result),
+    }
 }
 
 //Temporary helper function for testing
 fn parse_request(request: &mut [u8]) -> String {
     let get = b"GET / HTTP/1.1\r\n";
-
     let mut response: String = String::from("");
+    
     if request.starts_with(get) {
         response = format!("{}{}", build_headers(), build_response());
-    } else {
-        println!("{}", String::from_utf8_lossy(&request[..]));
-    }      
+    } 
 
     return response;
 }
