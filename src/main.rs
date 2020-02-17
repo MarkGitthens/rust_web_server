@@ -2,6 +2,9 @@ use std::io::prelude::*;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::collections::HashMap;
+use std::path::Path;
+use std::fs::File;
+use std::error::Error;
 
 #[derive(Debug)]
 enum RequestMethod {
@@ -44,7 +47,13 @@ struct HttpMessage {
     payload: Option<String>,
 }
 
-//TODO: Need to benchmark practically everything here and will most likely need to make some optimizations
+/*TODO: 1) Add a thread pool for each incoming request.
+        2) Add support for static HTML responses.
+        3) Add support for function callback registrations for request types
+        4) Seperate core http parsing logic into it's own library
+        5) Add further support for http parsing/handling based off of the latest HTTP RFC standards
+*/
+
 fn main() {
     let listener: TcpListener = TcpListener::bind("localhost:7999").unwrap();
 
@@ -54,7 +63,6 @@ fn main() {
                 let mut tcp_stream: TcpStream = stream;
 
                 //TODO: Need to determine a good buffer size for general http messages
-                //TODO: Need to plan for potentially needing multiple buffers worth of data for a single http messages
                 let mut buffer: [u8; 512] = [0; 512];
                 tcp_stream.read(&mut buffer).unwrap();
 
@@ -184,14 +192,44 @@ fn parse_request(request: &mut [u8]) -> String {
     return response;
 }
 
+fn file_does_not_exist(response: &mut String){
+    *response = String::from("<!DOCTYPE html><html><head><title>GET response</title></head><body>Couldn't find file</body></html>");
+}
+
+fn set_file(f1: File, file: &mut Option<File>) {
+    *file = Some(f1);
+}
+
 //Temporary helper function for testing
+//TODO: This seems really REALLY gross probably misusing match super hard here
 fn build_response() -> String {
-    let response: String = String::from("<!DOCTYPE html><html><head><title>GET response</title></head><body>Yo this a body</body></html>");
+    //TODO: have this be configurable through a config file
+    let path  = Path::new("/home/mark/html/static/example.html");
+
+    let mut response: String = String::new();
+    let file = File::open(&path);
+    let mut f: Option<File> = None;
+    
+    match file {
+        Err(_) => file_does_not_exist(&mut response),
+        Ok(resp) => set_file(resp, &mut f),
+    };
+
+    if response.is_empty() {
+        match f {
+            Some(mut x) => match x.read_to_string(&mut response) {
+                _ => ()
+            },
+            None => ()
+        };
+    }
+
     let content_type: String = String::from("Content-Type: text/html\r\n");
     let content_length: String = format!("Content-Length: {}\r\n\r\n", response.len());
 
     return format!("{}{}{}", content_type, content_length, response);
 }
+
 
 //Temporary helper function for testing
 fn build_headers() -> String {
