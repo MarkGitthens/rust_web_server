@@ -19,16 +19,14 @@
         3) Determine how much of the HTTP std we need to implement for a bare minimum static server
         4) Returning new Vec's all the time seems stupid inefficient. Particularly when responding with non text data
         5) path sanitation for resource files to mitigate risk of leaking non-server data
-        6) Remove dirs dependency
 */
-
-extern crate dirs;
 
 use std::io::prelude::*;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::path::Path;
 use std::fs::File;
 use std::error::Error;
 use std::str;
@@ -86,7 +84,44 @@ struct HttpMessage {
     payload: Option<Vec<u8>>,
 }
 
+fn read_config() -> HashMap<String,String>{
+    let mut map: HashMap<String, String> = HashMap::new();
+    let config_path = Path::new("config.txt");
+    let mut config_file = match File::open(config_path) {
+        Ok(contents) => contents,
+        Err(e) => panic!("Couldn't open config file! {}", e.description())
+    };
+
+    let mut file_contents: String = String::new();
+    match config_file.read_to_string(&mut file_contents) {
+        Ok(_bytes_read) => (),
+        Err(e) => panic!("Couldn't read file contents! {}", e.description())
+    };
+
+    let split_lines: Vec<&str> = file_contents.split("\n").collect::<Vec<&str>>();
+    
+    for x in 0..split_lines.len() {
+        let field: &str = split_lines[x];
+
+        let split_field: Vec<&str> = field.split("=").collect();
+        let field_value: String = split_field[1..].join("=");
+
+        map.insert(String::from(split_field[0].trim()), field_value.trim().to_string());
+    }
+
+    //For now we only require one config entry. 
+    //If we need more required config options we should pull this into it's own function
+    match map.contains_key("server_directory") {
+        false => panic!("server_directory not defined in config file!"),
+        _ => ()
+    };
+
+    return map;
+}
+
 fn main() {
+    let config_data: HashMap<String, String> = read_config();
+
     let listener: TcpListener = TcpListener::bind("localhost:7999").unwrap();
 
     for stream in listener.incoming() {
@@ -99,7 +134,7 @@ fn main() {
                 tcp_stream.read(&mut buffer).unwrap();
 
                 let message: HttpMessage = parse_http_message(&mut buffer);
-                let headers = parse_request(message);               
+                let headers = parse_request(&config_data, message);               
 
                 tcp_stream.write(&headers[..]).unwrap();
                 tcp_stream.flush().unwrap();                
@@ -194,11 +229,11 @@ fn parse_header_information(headers: &str) -> (bool, HttpHeaderInformation) {
 }
 
 //Temporary helper function for testing
-fn parse_request(request: HttpMessage) -> Vec<u8> {    
+fn parse_request(config_map: &HashMap<String,String>, request: HttpMessage) -> Vec<u8> {    
     let req_line = request.header_info.request_line.unwrap();
 
     let mut response: Vec<u8> = build_headers().as_bytes().to_vec();
-    response.append(&mut build_get_response(req_line.target));
+    response.append(&mut build_get_response(config_map, req_line.target));
     return response;
 }
 
@@ -213,12 +248,9 @@ fn set_file(f1: File, file: &mut Option<File>) {
 
 //TODO: A bit cleaner still needs more work
 //TODO: Probably vulnerable to Path Traversal exploits
-fn build_get_response(uri: String) -> Vec<u8> {
+fn build_get_response(config_map: &HashMap<String,String>, uri: String) -> Vec<u8> {
     //TODO: have this be configurable through a config file
-    let mut path: PathBuf = match dirs::home_dir() {
-        Some(x) => x,
-        None => PathBuf::new()
-    };
+    let mut path: PathBuf = PathBuf::from((*config_map).get("server_directory").unwrap());
 
     //TODO: Need verification of URI and will need to probably normalize it
     let split_message: Vec<&str> = uri.split(".").collect::<Vec<&str>>();
@@ -237,8 +269,6 @@ fn build_get_response(uri: String) -> Vec<u8> {
             _ => file_type = FileType::UNKNOWN
         };
     }
-
-    path.push("html/static");
 
     //skip the first forward slash
     path.push(&uri[1..]);
