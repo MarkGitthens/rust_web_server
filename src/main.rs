@@ -1,3 +1,27 @@
+// Limiting the scope of this project. Planned features
+/*  1) Bare minimum static web server.(With support for JS, png, jpeg, html, maybe more later)
+        a) Support for locally hosted HTML 
+        b) return image resources of png and jpeg types
+        c) return locally hosted JS files
+    2) HTTP error code responses for when something erroneous occurs (Accessing missing resource)
+    3) Ideally have some basic threading support to allow for many simultaneous requests from users
+*/
+
+/* Things this project will NOT do
+    1) Provide dynamic data (AKA don't expect to handle RESTful api calls)
+    2) Provide any sort of user authentication
+    3) Store any user data outside of whats required (ip, http requests,etc)
+    4) Provide routing services to other applications/services
+*/
+
+/*TODO: 1) Add a thread pool for each incoming request.
+        2) Add support for static HTML responses.
+        3) Determine how much of the HTTP std we need to implement for a bare minimum static server
+        4) Returning new Vec's all the time seems stupid inefficient. Particularly when responding with non text data
+        5) path sanitation for resource files to mitigate risk of leaking non-server data
+        6) Remove dirs dependency
+*/
+
 extern crate dirs;
 
 use std::io::prelude::*;
@@ -8,6 +32,18 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::error::Error;
 use std::str;
+
+#[derive(Debug)]
+enum FileType {
+    HTML,
+    HTM,
+    CSS,
+    JS,
+    PNG,
+    JPG,
+    JPEG,
+    UNKNOWN,
+}
 
 #[derive(Debug)]
 enum RequestMethod {
@@ -50,14 +86,6 @@ struct HttpMessage {
     payload: Option<Vec<u8>>,
 }
 
-/*TODO: 1) Add a thread pool for each incoming request.
-        2) Add support for static HTML responses.
-        3) Add support for function callback registrations for request types
-        4) Seperate core http parsing logic into it's own library
-        5) Add further support for http parsing/handling based off of the latest HTTP RFC standards
-        6) Returning new Vec's all the time seems stupid inefficient. Particularly when responding with non text data
-*/
-
 fn main() {
     let listener: TcpListener = TcpListener::bind("localhost:7999").unwrap();
 
@@ -83,7 +111,7 @@ fn main() {
     }
 }
 
-//TODO: This will probably have to change for handling chunked data.
+//TODO: Do we have to worry about chunked data?
 fn parse_http_message(request: &mut [u8]) -> HttpMessage {
     let http_message: String = format!("{}", String::from_utf8_lossy(&request[..]));
     let split_message: Vec<&str> = http_message.split("\r\n\r\n").collect::<Vec<&str>>();
@@ -113,17 +141,10 @@ fn parse_header_information(headers: &str) -> (bool, HttpHeaderInformation) {
     let header_lines: Vec<&str> = headers.split("\r\n").collect();
     let start: Vec<&str> = header_lines[0].split(" ").collect();
 
-    //TODO: Probably don't need to initialize both of these
     let mut _request_line: RequestLine = RequestLine {
         method: RequestMethod::UNKNOWN,
         target: String::from(""),
         version: String::from(""),
-    };
-
-    let mut _response_line: ResponseLine = ResponseLine {
-        http_version: String::from(""),
-        status_code: 0,
-        reason_phrase: String::from(""),
     };
 
     match start[0] {
@@ -160,7 +181,6 @@ fn parse_header_information(headers: &str) -> (bool, HttpHeaderInformation) {
     for x in 1..header_lines.len() {
         let field: &str = header_lines[x];
 
-        //TODO: Should I provide better parsing for field values or leave that up to the user?
         let split_field: Vec<&str> = field.split(":").collect();
         let field_value: String = split_field[1..].join(":");
 
@@ -178,10 +198,11 @@ fn parse_request(request: HttpMessage) -> Vec<u8> {
     let req_line = request.header_info.request_line.unwrap();
 
     let mut response: Vec<u8> = build_headers().as_bytes().to_vec();
-    response.append(&mut build_response(req_line.target));
+    response.append(&mut build_get_response(req_line.target));
     return response;
 }
 
+//TODO: We should have this grab info from a user defined error file
 fn file_does_not_exist(response: &mut String){
     *response = String::from("<!DOCTYPE html><html><head><title>GET response</title></head><body>Couldn't find file</body></html>");
 }
@@ -190,19 +211,31 @@ fn set_file(f1: File, file: &mut Option<File>) {
     *file = Some(f1);
 }
 
-//Temporary helper function for testing
+//TODO: A bit cleaner still needs more work
 //TODO: Probably vulnerable to Path Traversal exploits
-fn build_response(uri: String) -> Vec<u8> {
+fn build_get_response(uri: String) -> Vec<u8> {
     //TODO: have this be configurable through a config file
     let mut path: PathBuf = match dirs::home_dir() {
         Some(x) => x,
         None => PathBuf::new()
     };
 
+    //TODO: Need verification of URI and will need to probably normalize it
     let split_message: Vec<&str> = uri.split(".").collect::<Vec<&str>>();
 
-    if split_message.len() <= 1 {
-        //STUB
+    let mut file_type: FileType = FileType::UNKNOWN;
+    //For now assume that the uri is sane
+    if split_message.len() == 2 {
+        match split_message[1] {
+            "html" => file_type = FileType::HTML,
+            "htm" => file_type = FileType::HTM,
+            "css" => file_type = FileType::CSS,
+            "jpeg" => file_type = FileType::JPEG,
+            "jpg" => file_type = FileType::JPG,
+            "png" => file_type = FileType::PNG,
+            "js" => file_type = FileType::JS,
+            _ => file_type = FileType::UNKNOWN
+        };
     }
 
     path.push("html/static");
@@ -210,7 +243,7 @@ fn build_response(uri: String) -> Vec<u8> {
     //skip the first forward slash
     path.push(&uri[1..]);
 
-    let mut response: Vec<u8>;
+    let mut response: Vec<u8> = Vec::new();
 
     let file = File::open(&path);
     let mut f: Option<File> = None;
@@ -221,41 +254,33 @@ fn build_response(uri: String) -> Vec<u8> {
         Ok(resp) => set_file(resp, &mut f),
     };
 
-    let content_type: String;
+    let mut content_type: String = String::from("Content-Type: ");
     let mut con_len: usize = 0;
 
-    if split_message[1] == "html" {
-        content_type = String::from("Content-Type: text/html\r\n");
-        if text.is_empty() {
-            match f {
-                Some(mut x) => match x.read_to_string(&mut text) {
-                    Ok(x) => con_len = x,
-                    _ => con_len = 0
-                },
-                None => ()
-            };
-        }
+    match file_type {
+        FileType::HTM => {content_type = format!("{}{}\r\n", content_type, "text/html");},
+        FileType::HTML => {content_type = format!("{}{}\r\n", content_type, "text/html");},
+        FileType::JPG => {content_type = format!("{}{}\r\n", content_type, "image/jpeg");},
+        FileType::JPEG => {content_type = format!("{}{}\r\n", content_type, "image/jpeg");},
+        FileType::PNG => {content_type = format!("{}{}\r\n", content_type, "image/png");},
+        FileType::JS  => {content_type = format!("{}{}\r\n", content_type, "text/javascript");},
+        FileType::CSS => {content_type = format!("{}{}\r\n", content_type, "text/css");},
+        FileType::UNKNOWN => {content_type = format!("{}{}\r\n", content_type, "text/plain");}
+    };
 
-        response = text.as_bytes().to_vec();
-    }
-    else if split_message[1] == "jpg"{        
-        content_type = String::from("Content-Type: image/jpeg\r\n");
-        let mut buf = Vec::new();
+    //If file exists
+    match f {
+        Some(mut x) => {
+            let mut buf: Vec<u8> = Vec::new();
 
-        if text.is_empty() {
-            match f.unwrap().read_to_end(&mut buf) {
-                Ok(x) => con_len = x,
+            match x.read_to_end(&mut buf) {
+                Ok(num_read) => con_len = num_read,
                 Err(e) => {con_len = 0; println!("Read failed {}", e.description())}
             };
-        }
-        response = buf;
-    } else {
-        content_type = String::from("Content-Type: text/html\r\n");
-        file_does_not_exist(&mut text);
-
-        response = text.as_bytes().to_vec();
-        con_len = response.len();
-    }
+            response = buf;
+        },
+        None => println!("Couldn't open the requested file! {:?}", path)
+    };
 
     let content_length: String = format!("Content-Length: {}\r\n\r\n", con_len);
 
