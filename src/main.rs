@@ -47,7 +47,7 @@ struct HttpHeaderInformation {
 #[derive(Debug)]
 struct HttpMessage {
     header_info: HttpHeaderInformation,
-    payload: Option<String>,
+    payload: Option<Vec<u8>>,
 }
 
 /*TODO: 1) Add a thread pool for each incoming request.
@@ -55,6 +55,7 @@ struct HttpMessage {
         3) Add support for function callback registrations for request types
         4) Seperate core http parsing logic into it's own library
         5) Add further support for http parsing/handling based off of the latest HTTP RFC standards
+        6) Returning new Vec's all the time seems stupid inefficient. Particularly when responding with non text data
 */
 
 fn main() {
@@ -72,7 +73,7 @@ fn main() {
                 let message: HttpMessage = parse_http_message(&mut buffer);
                 let headers = parse_request(message);               
 
-                tcp_stream.write(headers.as_bytes()).unwrap();
+                tcp_stream.write(&headers[..]).unwrap();
                 tcp_stream.flush().unwrap();                
             }
             Err(e) => {
@@ -96,7 +97,7 @@ fn parse_http_message(request: &mut [u8]) -> HttpMessage {
         
         HttpMessage {
             header_info: result.1,
-            payload: Some(data),
+            payload: Some(data.as_bytes().to_vec()),
         }
     } else {
         HttpMessage {
@@ -173,11 +174,11 @@ fn parse_header_information(headers: &str) -> (bool, HttpHeaderInformation) {
 }
 
 //Temporary helper function for testing
-fn parse_request(request: HttpMessage) -> String {    
+fn parse_request(request: HttpMessage) -> Vec<u8> {    
     let req_line = request.header_info.request_line.unwrap();
 
-    let response = format!("{}{}", build_headers(), build_response(req_line.target));
-
+    let mut response: Vec<u8> = build_headers().as_bytes().to_vec();
+    response.append(&mut build_response(req_line.target));
     return response;
 }
 
@@ -190,9 +191,8 @@ fn set_file(f1: File, file: &mut Option<File>) {
 }
 
 //Temporary helper function for testing
-//TODO: This seems really REALLY gross probably misusing match super hard here
 //TODO: Probably vulnerable to Path Traversal exploits
-fn build_response(uri: String) -> String {
+fn build_response(uri: String) -> Vec<u8> {
     //TODO: have this be configurable through a config file
     let mut path: PathBuf = match dirs::home_dir() {
         Some(x) => x,
@@ -210,12 +210,14 @@ fn build_response(uri: String) -> String {
     //skip the first forward slash
     path.push(&uri[1..]);
 
-    let mut response: String = String::new();
+    let mut response: Vec<u8>;
+
     let file = File::open(&path);
     let mut f: Option<File> = None;
     
+    let mut text: String = String::new();
     match file {
-        Err(_) => file_does_not_exist(&mut response),
+        Err(_) => file_does_not_exist(&mut text),
         Ok(resp) => set_file(resp, &mut f),
     };
 
@@ -224,37 +226,43 @@ fn build_response(uri: String) -> String {
 
     if split_message[1] == "html" {
         content_type = String::from("Content-Type: text/html\r\n");
-        if response.is_empty() {
+        if text.is_empty() {
             match f {
-                Some(mut x) => match x.read_to_string(&mut response) {
+                Some(mut x) => match x.read_to_string(&mut text) {
                     Ok(x) => con_len = x,
                     _ => con_len = 0
                 },
                 None => ()
             };
         }
+
+        response = text.as_bytes().to_vec();
     }
     else if split_message[1] == "jpg"{        
         content_type = String::from("Content-Type: image/jpeg\r\n");
         let mut buf = Vec::new();
 
-        if response.is_empty() {
+        if text.is_empty() {
             match f.unwrap().read_to_end(&mut buf) {
                 Ok(x) => con_len = x,
                 Err(e) => {con_len = 0; println!("Read failed {}", e.description())}
             };
         }
-
-        response = unsafe {str::from_utf8_unchecked(&buf).to_string()};
+        response = buf;
     } else {
         content_type = String::from("Content-Type: text/html\r\n");
-        file_does_not_exist(&mut response);
+        file_does_not_exist(&mut text);
+
+        response = text.as_bytes().to_vec();
         con_len = response.len();
     }
 
     let content_length: String = format!("Content-Length: {}\r\n\r\n", con_len);
 
-    return format!("{}{}{}", content_type, content_length, response);
+    let mut result: Vec<u8> = content_type.as_bytes().to_vec();
+    result.append(&mut content_length.as_bytes().to_vec());
+    result.append(&mut response);
+    return result;
 }
 
 //Temporary helper function for testing
