@@ -27,7 +27,6 @@ use std::path::{PathBuf, Path};
 use std::fs::File;
 use std::error::Error;
 
-#[derive(Debug)]
 enum FileType {
     HTML,
     HTM,
@@ -40,7 +39,6 @@ enum FileType {
     UNKNOWN,
 }
 
-#[derive(Debug)]
 enum RequestMethod {
     GET,
     HEAD,
@@ -54,30 +52,35 @@ enum RequestMethod {
     UNKNOWN,
 }
 
-#[derive(Debug)]
 struct RequestLine {
     method: RequestMethod,
     target: String,
     version: String,
 }
 
-#[derive(Debug)]
 struct ResponseLine {
     http_version: String,
     status_code: u8,
     reason_phrase: String,
 }
 
-#[derive(Debug)]
-struct HttpHeaderInformation {
+struct RequestHeader {
     request_line: Option<RequestLine>,
+    header_fields: HashMap<String, String>,
+}
+
+struct ResponseHeader {
     response_line: Option<ResponseLine>,
     header_fields: HashMap<String, String>,
 }
 
-#[derive(Debug)]
-struct HttpMessage {
-    header_info: HttpHeaderInformation,
+struct HttpRequest {
+    header_info: RequestHeader,
+    payload: Option<Vec<u8>>,
+}
+
+struct HttpResponse {
+    header_info: ResponseHeader,
     payload: Option<Vec<u8>>,
 }
 
@@ -145,8 +148,8 @@ fn main() {
 }
 
 //TODO: Do we have to worry about chunked data?
-fn parse_http_message(request: &mut [u8]) -> Option<HttpMessage> {
-    let header_info: HttpHeaderInformation;
+fn parse_http_message(request: &mut [u8]) -> Option<HttpRequest> {
+    let header_info: RequestHeader;
 
     let http_message: String = format!("{}", String::from_utf8_lossy(&request[..]));
     let split_message: Vec<&str> = http_message.split("\r\n\r\n").collect::<Vec<&str>>();
@@ -159,7 +162,7 @@ fn parse_http_message(request: &mut [u8]) -> Option<HttpMessage> {
         }
     };
 
-    let mut result = HttpMessage {
+    let mut result = HttpRequest {
         header_info: header_info,
         payload: None
     };
@@ -177,7 +180,7 @@ fn parse_http_message(request: &mut [u8]) -> Option<HttpMessage> {
 }
 
 //TODO: Verify request line
-fn parse_header_information(headers: &str) -> Option<HttpHeaderInformation> {
+fn parse_header_information(headers: &str) -> Option<RequestHeader> {
     let header_lines: Vec<&str> = headers.split("\r\n").collect();
     let start: Vec<&str> = header_lines[0].split(" ").collect();
 
@@ -202,9 +205,8 @@ fn parse_header_information(headers: &str) -> Option<HttpHeaderInformation> {
 
     //TODO: Add sanity checking and return proper error code if invalid data
     //TODO: Add logic to determine if this is a request or a response message
-    let mut result: HttpHeaderInformation = HttpHeaderInformation {
+    let mut result: RequestHeader = RequestHeader {
         request_line: None,
-        response_line: None,
         header_fields: HashMap::new(),
     };
 
@@ -237,7 +239,7 @@ fn file_does_not_exist() -> Vec<u8>{
 
 //TODO: A bit cleaner still needs more work
 //TODO: Probably vulnerable to Path Traversal exploits
-fn build_get_response(config_map: &HashMap<String,String>, buffer: &mut BufWriter<TcpStream>, request: HttpMessage) {
+fn build_get_response(config_map: &HashMap<String,String>, buffer: &mut BufWriter<TcpStream>, request: HttpRequest) {
     let mut path: PathBuf = PathBuf::from((*config_map).get("server_directory").unwrap());
     
     //TODO: Need to sanitize paths to remove . and ..
