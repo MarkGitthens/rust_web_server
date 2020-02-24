@@ -20,16 +20,12 @@
         4) path sanitation for resource files to mitigate risk of leaking non-server data
 */
 
-use std::io::prelude::*;
-use std::net::TcpListener;
-use std::net::TcpStream;
+use std::io::{prelude::*, BufWriter};
+use std::net::{TcpListener, TcpStream};
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::path::Path;
+use std::path::{PathBuf, Path};
 use std::fs::File;
 use std::error::Error;
-use std::str;
-use std::io::BufWriter;
 
 #[derive(Debug)]
 enum FileType {
