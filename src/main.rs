@@ -19,11 +19,10 @@
         3) Determine how much of the HTTP std we need to implement for a bare minimum static server
         4) path sanitation for resource files to mitigate risk of leaking non-server data
 */
-
-use std::io::{prelude::*, BufWriter};
-use std::net::{TcpListener, TcpStream};
-use std::collections::HashMap;
 use std::path::{PathBuf, Path};
+use std::io::prelude::*;
+use std::net::TcpListener;
+use std::collections::HashMap;
 use std::fs::File;
 use std::error::Error;
 
@@ -60,7 +59,7 @@ struct RequestLine {
 
 struct ResponseLine {
     http_version: String,
-    status_code: u8,
+    status_code: u16,
     reason_phrase: String,
 }
 
@@ -70,7 +69,7 @@ struct RequestHeader {
 }
 
 struct ResponseHeader {
-    response_line: Option<ResponseLine>,
+    response_line: ResponseLine,
     header_fields: HashMap<String, String>,
 }
 
@@ -82,6 +81,30 @@ struct HttpRequest {
 struct HttpResponse {
     header_info: ResponseHeader,
     payload: Option<Vec<u8>>,
+}
+
+impl HttpResponse {
+    //TODO: Not sure if there is a faster/better way to do this
+    fn serialize(&mut self) -> Vec<u8> {
+        let mut result: Vec<u8> = Vec::new();
+        let response_line: String = format!("{} {} {}\r\n",
+            self.header_info.response_line.http_version,
+            self.header_info.response_line.status_code,
+            self.header_info.response_line.reason_phrase);
+        result.extend_from_slice(response_line.as_bytes());
+
+        for i in self.header_info.header_fields.iter() {
+            result.extend_from_slice(&mut format!("{}: {}\r\n", i.0, i.1).as_bytes());
+        }
+
+        result.extend_from_slice(&mut String::from("\r\n").as_bytes());
+        match &self.payload {
+            Some(x) => result.extend_from_slice(&x[..]),
+            None => ()
+        }
+
+        return result;
+    }
 }
 
 fn read_config() -> HashMap<String,String>{
@@ -132,11 +155,10 @@ fn main() {
 
                 match parse_http_message(&mut read_buffer) {
                     Some(msg) => {
-                        let mut buffer = BufWriter::new(stream);
-                        build_get_response(&config_data, &mut buffer, msg);
-                        buffer.flush().unwrap();  
+                        let mut response: HttpResponse = build_get_response(&config_data, msg);
+                        stream.write(&response.serialize()[..]).unwrap();  
                     },
-                    //TODO: Send error message
+                    //TODO: Send 400 malformed request error message
                     None => println!("Couldn't parse http message"),
                 };                                            
             }
@@ -239,9 +261,13 @@ fn file_does_not_exist() -> Vec<u8>{
 
 //TODO: A bit cleaner still needs more work
 //TODO: Probably vulnerable to Path Traversal exploits
-fn build_get_response(config_map: &HashMap<String,String>, buffer: &mut BufWriter<TcpStream>, request: HttpRequest) {
+fn build_get_response(config_map: &HashMap<String,String>, request: HttpRequest)  -> HttpResponse {
     let mut path: PathBuf = PathBuf::from((*config_map).get("server_directory").unwrap());
-    
+    let mut response: HttpResponse = HttpResponse {
+        header_info: build_test_headers(),
+        payload: None,
+    };
+
     //TODO: Need to sanitize paths to remove . and ..
     let uri: String;
     match request.header_info.request_line {
@@ -250,67 +276,85 @@ fn build_get_response(config_map: &HashMap<String,String>, buffer: &mut BufWrite
     };
     
     //skip the first forward slash
+    //TODO: Default to {server_directory}/index.html if target is /
     path.push(&uri[1..]);
 
-    let file_type: FileType;
-
-    match path.extension() {
-       Some(ext) => {
+    let file_type: FileType = match path.extension() {
+        Some(ext) => {
             match ext.to_str().unwrap() {
-                "html" => file_type = FileType::HTML,
-                "htm" => file_type = FileType::HTM,
-                "css" => file_type = FileType::CSS,
-                "jpeg" => file_type = FileType::JPEG,
-                "jpg" => file_type = FileType::JPG,
-                "png" => file_type = FileType::PNG,
-                "js" => file_type = FileType::JS,
-                "ico" => file_type = FileType::ICO,
-                _ => file_type = FileType::UNKNOWN
-            };
+                "html" => FileType::HTML,
+                "htm" => FileType::HTM,
+                "css" => FileType::CSS,
+                "jpeg" => FileType::JPEG,
+                "jpg" => FileType::JPG,
+                "png" => FileType::PNG,
+                "js" => FileType::JS,
+                "ico" => FileType::ICO,
+                _ => FileType::UNKNOWN
+            }
         },
-        None => file_type = FileType::UNKNOWN
+        None => FileType::UNKNOWN
     };
+    
+    response.header_info.header_fields.insert(String::from("Content-Type"),
+        String::from(match file_type {
+            FileType::HTM => "text/html",
+            FileType::HTML => "text/html",
+            FileType::JPG => "image/jpeg",
+            FileType::JPEG => "image/jpeg",
+            FileType::PNG => "image/png",
+            FileType::JS  => "text/javascript",
+            FileType::CSS => "text/css",
+            FileType::ICO => "image/x-icon",
+            FileType::UNKNOWN => "text/html"
+        })
+    );
 
-    (*buffer).write(&build_headers()[..]).unwrap();
-
-    let mut content_type: String = String::from("Content-Type: ");
-
-    match file_type {
-        FileType::HTM => {content_type = format!("{}{}\r\n", content_type, "text/html");},
-        FileType::HTML => {content_type = format!("{}{}\r\n", content_type, "text/html");},
-        FileType::JPG => {content_type = format!("{}{}\r\n", content_type, "image/jpeg");},
-        FileType::JPEG => {content_type = format!("{}{}\r\n", content_type, "image/jpeg");},
-        FileType::PNG => {content_type = format!("{}{}\r\n", content_type, "image/png");},
-        FileType::JS  => {content_type = format!("{}{}\r\n", content_type, "text/javascript");},
-        FileType::CSS => {content_type = format!("{}{}\r\n", content_type, "text/css");},
-        FileType::ICO => {content_type = format!("{}{}\r\n", content_type, "image/x-icon");},
-        FileType::UNKNOWN => {content_type = format!("{}{}\r\n", content_type, "text/html");}
+    //TODO: Need to clean this up
+    //TODO: Need to construct different response depending on requested content type
+    match File::open(&path) {
+        Err(_) => {
+            let resp = file_does_not_exist();
+            response.header_info.response_line.reason_phrase = String::from("Not Found");
+            response.header_info.response_line.status_code = 404;
+            response.header_info.header_fields.insert(String::from("Content-Length"), resp.len().to_string());
+            response.payload = Some(resp);
+        },
+        Ok(mut file) => {
+            if file.metadata().unwrap().is_dir() {
+                let resp = file_does_not_exist();
+                response.header_info.response_line.reason_phrase = String::from("Not Found");
+                response.header_info.response_line.status_code = 404;
+                response.header_info.header_fields.insert(String::from("Content-Length"), resp.len().to_string());
+                response.payload = Some(resp);
+            }
+        
+            let mut buf: Vec<u8> = Vec::new();
+        
+            match file.read_to_end(&mut buf) {
+                Ok(num_read) => {
+                    response.header_info.header_fields.insert(String::from("Content-Length"), num_read.to_string());
+                    response.payload = Some(buf);
+                },
+                //TODO: Return http error code
+                Err(e) => {println!("Read failed {}", e.description())}
+            };
+        }
     };
-
-    (*buffer).write(content_type.as_bytes()).unwrap();
-
-    let mut file = match File::open(&path) {
-        Err(_) => {(*buffer).write(&file_does_not_exist()[..]).unwrap(); return;},
-        Ok(resp) => resp,
-    };
-
-    let mut buf: Vec<u8> = Vec::new();
-    let con_len: usize;
-
-    match file.read_to_end(&mut buf) {
-        Ok(num_read) => con_len = num_read,
-        Err(e) => {con_len = 0; println!("Read failed {}", e.description())}
-    };
-
-    let content_length: String = format!("Content-Length: {}\r\n\r\n", con_len);
-    (*buffer).write(content_length.as_bytes()).unwrap();
-    (*buffer).write(&buf[..]).unwrap();
+    return response;
 }
 
 //Temporary helper function for testing
-fn build_headers() -> Vec<u8> {
-    let status_line: String = String::from("HTTP/1.1 200 OK\r\n");
-    let header_line: String = String::from("Server: rust_test\r\n");
+fn build_test_headers() -> ResponseHeader {
+    let mut headers: HashMap<String, String> = HashMap::new();
+    headers.insert(String::from("Server"), String::from("rust_test"));
 
-    return format!("{}{}", status_line, header_line).as_bytes().to_vec();
+    ResponseHeader {
+        response_line: ResponseLine {
+            http_version: String::from("HTTP/1.1"),
+            status_code: 200,
+            reason_phrase: String::from("OK"),
+        },
+        header_fields: headers,
+    }
 }
