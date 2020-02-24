@@ -123,7 +123,7 @@ fn read_config() -> HashMap<String,String>{
 fn main() {
     let config_data: HashMap<String, String> = read_config();
 
-    let listener: TcpListener = TcpListener::bind("localhost:7999").unwrap();
+    let listener: TcpListener = TcpListener::bind("localhost:8080").unwrap();
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
@@ -131,11 +131,15 @@ fn main() {
                 let mut read_buffer: [u8; 512] = [0; 512];
                 stream.read(&mut read_buffer).unwrap();
 
-                let message: HttpMessage = parse_http_message(&mut read_buffer);            
-                
-                let mut buffer: BufWriter<TcpStream> = BufWriter::new(stream);
-                build_get_response(&config_data, &mut buffer, message);
-                buffer.flush().unwrap();                
+                match parse_http_message(&mut read_buffer) {
+                    Some(msg) => {
+                        let mut buffer = BufWriter::new(stream);
+                        build_get_response(&config_data, &mut buffer, msg);
+                        buffer.flush().unwrap();  
+                    },
+                    //TODO: Send error message
+                    None => println!("Couldn't parse http message"),
+                };                                            
             }
             Err(e) => {
                 println!("{}", e);
@@ -145,32 +149,39 @@ fn main() {
 }
 
 //TODO: Do we have to worry about chunked data?
-fn parse_http_message(request: &mut [u8]) -> HttpMessage {
+fn parse_http_message(request: &mut [u8]) -> Option<HttpMessage> {
+    let header_info: HttpHeaderInformation;
+
     let http_message: String = format!("{}", String::from_utf8_lossy(&request[..]));
     let split_message: Vec<&str> = http_message.split("\r\n\r\n").collect::<Vec<&str>>();
-
-    let result: (bool, HttpHeaderInformation) = parse_header_information(split_message[0]);
-
-    let message_object: HttpMessage = if result.0 {
-        let length: usize = result.1.header_fields.get("Content-Length").unwrap().parse().unwrap();
-        let mut data: String = String::from(split_message[1]);
-        data.truncate(length);
-        
-        HttpMessage {
-            header_info: result.1,
-            payload: Some(data.as_bytes().to_vec()),
-        }
-    } else {
-        HttpMessage {
-            header_info: result.1,
-            payload: None,
+    
+    match parse_header_information(split_message[0]) {
+        Some(x) => header_info = x,
+        None => {
+            println!("Couldn't parse header information");
+            return None;
         }
     };
 
-    return message_object;
+    let mut result = HttpMessage {
+        header_info: header_info,
+        payload: None
+    };
+
+    match result.header_info.header_fields.get("Content-Length") {
+        Some(x) => {
+            let mut data: String = String::from(split_message[1]);
+            data.truncate(x.parse().unwrap());
+            result.payload = Some(data.as_bytes().to_vec());
+        },
+        None => result.payload = None
+    };
+
+    return Some(result);
 }
 
-fn parse_header_information(headers: &str) -> (bool, HttpHeaderInformation) {
+//TODO: Verify request line
+fn parse_header_information(headers: &str) -> Option<HttpHeaderInformation> {
     let header_lines: Vec<&str> = headers.split("\r\n").collect();
     let start: Vec<&str> = header_lines[0].split(" ").collect();
 
@@ -220,10 +231,7 @@ fn parse_header_information(headers: &str) -> (bool, HttpHeaderInformation) {
         result.header_fields.insert(String::from(split_field[0]), field_value.trim().to_string());
     }
 
-    match result.header_fields.get("Content-Length") {
-        Some(_x) => return (true, result),
-        None => return (false, result),
-    }
+    return Some(result);
 }
 
 //TODO: We should have this grab info from a user defined error file
@@ -237,7 +245,11 @@ fn build_get_response(config_map: &HashMap<String,String>, buffer: &mut BufWrite
     let mut path: PathBuf = PathBuf::from((*config_map).get("server_directory").unwrap());
     
     //TODO: Need to sanitize paths to remove . and ..
-    let uri: String = request.header_info.request_line.unwrap().target;
+    let uri: String;
+    match request.header_info.request_line {
+        Some(x) => uri = x.target,
+        None => panic!("Couldn't get request line!") 
+    };
     
     //skip the first forward slash
     path.push(&uri[1..]);
