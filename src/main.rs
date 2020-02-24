@@ -14,7 +14,7 @@
     4) Provide routing services to other applications/services
 */
 
-/*TODO: 1) Add a thread pool for each incoming request.
+/*TODO: 1) Add basic threading support
         2) Add support for static HTML responses.
         3) Determine how much of the HTTP std we need to implement for a bare minimum static server
         4) path sanitation for resource files to mitigate risk of leaking non-server data
