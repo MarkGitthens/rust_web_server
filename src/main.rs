@@ -42,12 +42,9 @@ enum RequestMethod {
     GET,
     HEAD,
     POST,
-    PUT,
-    DELETE,
     CONNECT,
     OPTIONS,
     TRACE,
-    PATCH,
     UNKNOWN,
 }
 
@@ -64,7 +61,7 @@ struct ResponseLine {
 }
 
 struct RequestHeader {
-    request_line: Option<RequestLine>,
+    request_line: RequestLine,
     header_fields: HashMap<String, String>,
 }
 
@@ -201,57 +198,72 @@ fn parse_http_message(request: &mut [u8]) -> Option<HttpRequest> {
     return Some(result);
 }
 
+//Validates and parses the request line
+fn parse_request_line(header_info: &str) -> Option<RequestLine> {
+    let tokens: Vec<&str> = header_info.split(" ").collect();
+    let mut result: RequestLine  = RequestLine {
+        method: RequestMethod::UNKNOWN,
+        target: "".to_string(),
+        version: "HTTP/1.1".to_string()
+    };
+
+    if tokens.len() == 3 {
+        match tokens[0] {
+            "GET" => {result.method = RequestMethod::GET;}
+            "HEAD" => { result.method = RequestMethod::HEAD;}
+            "POST" => { result.method = RequestMethod::POST;}
+            "CONNECT" => { result.method = RequestMethod::CONNECT;}
+            "OPTIONS" => { result.method = RequestMethod::OPTIONS;}
+            "TRACE" => { result.method = RequestMethod::TRACE;}
+            _ => { return None; }
+        };
+
+        //Need to sanitize and verify this is a correct uri 
+       /* for i in tokens[1].chars() {
+
+        }
+        */
+        result.target = String::from(tokens[1]);
+        
+        if tokens[2].to_lowercase() != "http/1.1" {
+            println!("Wrong version type");
+            return None;
+        }
+        result.version = String::from(tokens[2]);
+    
+    } else {
+        return None;
+    }
+    return Some(result);
+}
+
 //TODO: Verify request line
 fn parse_header_information(headers: &str) -> Option<RequestHeader> {
     let header_lines: Vec<&str> = headers.split("\r\n").collect();
-    let start: Vec<&str> = header_lines[0].split(" ").collect();
 
-    let mut _request_line: RequestLine = RequestLine {
-        method: RequestMethod::UNKNOWN,
-        target: String::from(""),
-        version: String::from(""),
-    };
+    match parse_request_line(header_lines[0]) {
+        Some(request_line) =>  {
+            //TODO: Add sanity checking and return proper error code if invalid data
+            let mut result: RequestHeader = RequestHeader {
+                request_line: request_line,
+                header_fields: HashMap::new(),
+            };
 
-    match start[0] {
-        "GET" => {_request_line.method = RequestMethod::GET;}
-        "HEAD" => { _request_line.method = RequestMethod::HEAD;}
-        "POST" => { _request_line.method = RequestMethod::POST;}
-        "PUT" => { _request_line.method = RequestMethod::PUT;}
-        "DELETE" => { _request_line.method = RequestMethod::DELETE;}
-        "CONNECT" => { _request_line.method = RequestMethod::CONNECT;}
-        "OPTIONS" => { _request_line.method = RequestMethod::OPTIONS;}
-        "TRACE" => { _request_line.method = RequestMethod::TRACE;}
-        "PATCH" => { _request_line.method = RequestMethod::PATCH;}
-        _ => { /*Stub case*/ }
-    };
+            for x in 1..header_lines.len() {
+                let field: &str = header_lines[x];
 
-    //TODO: Add sanity checking and return proper error code if invalid data
-    //TODO: Add logic to determine if this is a request or a response message
-    let mut result: RequestHeader = RequestHeader {
-        request_line: None,
-        header_fields: HashMap::new(),
-    };
+                let split_field: Vec<&str> = field.split(":").collect();
+                let field_value: String = split_field[1..].join(":");
 
-    match _request_line.method {
-        RequestMethod::UNKNOWN => {/*TODO: We are a response, or invalid*/}
-        _ => { 
-            _request_line.target = String::from(start[1]);
-            _request_line.version = String::from(start[2]); 
-        
-            result.request_line = Some(_request_line);
+                result.header_fields.insert(String::from(split_field[0]), field_value.trim().to_string());
+            }
+
+            return Some(result);
+        },
+        None =>  {
+            return None;
         }
-    }
-
-    for x in 1..header_lines.len() {
-        let field: &str = header_lines[x];
-
-        let split_field: Vec<&str> = field.split(":").collect();
-        let field_value: String = split_field[1..].join(":");
-
-        result.header_fields.insert(String::from(split_field[0]), field_value.trim().to_string());
-    }
-
-    return Some(result);
+    };    
 }
 
 //TODO: We should have this grab info from a user defined error file
@@ -267,17 +279,10 @@ fn build_get_response(config_map: &HashMap<String,String>, request: HttpRequest)
         header_info: build_test_headers(),
         payload: None,
     };
-
-    //TODO: Need to sanitize paths to remove . and ..
-    let uri: String;
-    match request.header_info.request_line {
-        Some(x) => uri = x.target,
-        None => panic!("Couldn't get request line!") 
-    };
     
     //skip the first forward slash
     //TODO: Default to {server_directory}/index.html if target is /
-    path.push(&uri[1..]);
+    path.push(&request.header_info.request_line.target[1..]);
 
     let file_type: FileType = match path.extension() {
         Some(ext) => {
