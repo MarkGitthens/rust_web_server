@@ -90,16 +90,16 @@ impl HttpResponse {
         result.extend_from_slice(response_line.as_bytes());
 
         for i in self.header_info.header_fields.iter() {
-            result.extend_from_slice(&mut format!("{}: {}\r\n", i.0, i.1).as_bytes());
+            result.extend_from_slice(format!("{}: {}\r\n", i.0, i.1).as_bytes());
         }
 
-        result.extend_from_slice(&mut String::from("\r\n").as_bytes());
+        result.extend_from_slice(String::from("\r\n").as_bytes());
         match &self.payload {
             Some(x) => result.extend_from_slice(&x[..]),
             None => ()
         }
 
-        return result;
+        result
     }
 }
 
@@ -117,12 +117,12 @@ fn read_config() -> HashMap<String,String>{
         Err(e) => panic!("Couldn't read file contents! {}", e.description())
     };
 
-    let split_lines: Vec<&str> = file_contents.split("\n").collect::<Vec<&str>>();
+    let split_lines: Vec<&str> = file_contents.split('\n').collect::<Vec<&str>>();
     
-    for x in 0..split_lines.len() {
-        let field: &str = split_lines[x];
+    for iter in split_lines.iter() {
+        let field: &str = iter;
 
-        let split_field: Vec<&str> = field.split("=").collect();
+        let split_field: Vec<&str> = field.split('=').collect();
         let field_value: String = split_field[1..].join("=");
 
         map.insert(String::from(split_field[0].trim()), field_value.trim().to_string());
@@ -130,12 +130,11 @@ fn read_config() -> HashMap<String,String>{
 
     //For now we only require one config entry. 
     //If we need more required config options we should pull this into it's own function
-    match map.contains_key("server_directory") {
-        false => panic!("server_directory not defined in config file!"),
-        _ => ()
-    };
+    if !map.contains_key("server_directory") {
+        panic!("server_directory not defined in config file!");
+    }
 
-    return map;
+    map
 }
 
 fn main() {
@@ -151,7 +150,7 @@ fn main() {
                 match parse_http_message(&mut read_buffer) {
                     Some(msg) => {
                         let mut response: HttpResponse = build_get_response(&config_data, msg);
-                        stream.write(&response.serialize()[..]).unwrap();  
+                        stream.write_all(&response.serialize()[..]).unwrap();  
                     },
                     //TODO: Send 400 malformed request error message
                     None => println!("Couldn't parse http message"),
@@ -165,34 +164,32 @@ fn main() {
 }
 
 fn parse_http_message(request: &mut [u8]) -> Option<HttpRequest> {
-    let header_info: RequestHeader;
-
     let http_message: String = format!("{}", String::from_utf8_lossy(&request[..]));
     let split_message: Vec<&str> = http_message.split("\r\n\r\n").collect::<Vec<&str>>();
     
     match parse_header_information(split_message[0]) {
-        Some(x) => header_info = x,
+        Some(headers) => {
+            let mut result = HttpRequest {
+                header_info: headers,
+                payload: None
+            };
+        
+            match result.header_info.header_fields.get("Content-Length") {
+                Some(x) => {
+                    let mut data: String = String::from(split_message[1]);
+                    data.truncate(x.parse().unwrap());
+                    result.payload = Some(data.as_bytes().to_vec());
+                },
+                None => result.payload = None
+            };
+
+            Some(result)
+        },
         None => {
             println!("Couldn't parse header information");
-            return None;
+            None
         }
-    };
-
-    let mut result = HttpRequest {
-        header_info: header_info,
-        payload: None
-    };
-
-    match result.header_info.header_fields.get("Content-Length") {
-        Some(x) => {
-            let mut data: String = String::from(split_message[1]);
-            data.truncate(x.parse().unwrap());
-            result.payload = Some(data.as_bytes().to_vec());
-        },
-        None => result.payload = None
-    };
-
-    return Some(result);
+    }
 }
 
 //Decode percent encoded values and then return None if we find any ..
@@ -201,17 +198,17 @@ fn valid_uri(uri: &str) -> Option<String> {
     match percent_decode_str(uri).decode_utf8() {
         Ok(decoded_uri) => {
             match decoded_uri.find("..") {
-                Some(_x) => return None,
-                None => return Some((&decoded_uri).to_string())
-            };
+                Some(_x) => None,
+                None => Some((&decoded_uri).to_string())
+            }
         },
-        Err(_x) => {return None;}
-    };
+        Err(_x) => None
+    }
 }
 
 //Validates and parses the request line
 fn parse_request_line(header_info: &str) -> Option<RequestLine> {
-    let tokens: Vec<&str> = header_info.split(" ").collect();
+    let tokens: Vec<&str> = header_info.split(' ').collect();
     let mut result: RequestLine  = RequestLine {
         method: RequestMethod::UNKNOWN,
         target: "".to_string(),
@@ -234,14 +231,14 @@ fn parse_request_line(header_info: &str) -> Option<RequestLine> {
             None => return None
         };
         
-        if tokens[2].to_lowercase() != "http/1.1" {
+        if tokens[2] != "HTTP/1.1" {
             println!("Wrong version type");
             return None;
         }
         result.version = String::from(tokens[2]);
-        return Some(result);
+        Some(result)
     } else {
-        return None;
+        None
     }
 }
 
@@ -249,33 +246,31 @@ fn parse_header_information(headers: &str) -> Option<RequestHeader> {
     let header_lines: Vec<&str> = headers.split("\r\n").collect();
 
     match parse_request_line(header_lines[0]) {
-        Some(request_line) =>  {
+        Some(req_line) =>  {
             //TODO: Add sanity checking and return proper error code if invalid data
             let mut result: RequestHeader = RequestHeader {
-                request_line: request_line,
+                request_line: req_line,
                 header_fields: HashMap::new(),
             };
 
-            for x in 1..header_lines.len() {
-                let field: &str = header_lines[x];
+            for iter in header_lines.iter().skip(1) {
+                let field: &str = iter;
 
-                let split_field: Vec<&str> = field.split(":").collect();
+                let split_field: Vec<&str> = field.split(':').collect();
                 let field_value: String = split_field[1..].join(":");
 
                 result.header_fields.insert(String::from(split_field[0]), field_value.trim().to_string());
             }
 
-            return Some(result);
+            Some(result)
         },
-        None =>  {
-            return None;
-        }
-    };    
+        None => None
+    }
 }
 
 //TODO: We should have this grab info from a user defined error file
 fn file_does_not_exist() -> Vec<u8>{
-    return String::from("<!DOCTYPE html><html><head><title>GET response</title></head><body>Couldn't find file</body></html>").as_bytes().to_vec();
+    String::from("<!DOCTYPE html><html><head><title>GET response</title></head><body>Couldn't find file</body></html>").as_bytes().to_vec()
 }
 
 //TODO: A bit cleaner still needs more work
@@ -347,7 +342,7 @@ fn build_get_response(config_map: &HashMap<String,String>, request: HttpRequest)
             };
         }
     };
-    return response;
+    response
 }
 
 fn generate_404() -> HttpResponse {
@@ -356,7 +351,7 @@ fn generate_404() -> HttpResponse {
 
     headers.insert(String::from("Content-Length"), resp.len().to_string());
 
-    return HttpResponse {
+    HttpResponse {
         header_info: ResponseHeader {
             response_line: ResponseLine {
                 http_version: String::from("HTTP/1.1"),
@@ -366,7 +361,7 @@ fn generate_404() -> HttpResponse {
             header_fields: headers
         },
         payload: Some(resp)
-    };
+    }
 }
 //Temporary helper function for testing
 fn build_test_headers() -> ResponseHeader {
