@@ -13,11 +13,10 @@
     3) Store any user data outside of whats required (ip, http requests,etc)
     4) Provide routing services to other applications/services
 */
-
-/*TODO: 1) Add basic threading support
-        2) Add support for static HTML responses.
-        3) Determine how much of the HTTP std we need to implement for a bare minimum static server
-        4) path sanitation for resource files to mitigate risk of leaking non-server data
+/*
+    TODO: 1) Add basic threading support
+    TODO: 2) Add support for static HTML responses.
+    TODO: 3) Determine how much of the HTTP std we need to implement for a bare minimum static server
 */
 use std::path::{PathBuf, Path};
 use std::io::prelude::*;
@@ -25,6 +24,7 @@ use std::net::TcpListener;
 use std::collections::HashMap;
 use std::fs::File;
 use std::error::Error;
+use percent_encoding::{percent_decode_str};
 
 enum FileType {
     HTML,
@@ -81,7 +81,6 @@ struct HttpResponse {
 }
 
 impl HttpResponse {
-    //TODO: Not sure if there is a faster/better way to do this
     fn serialize(&mut self) -> Vec<u8> {
         let mut result: Vec<u8> = Vec::new();
         let response_line: String = format!("{} {} {}\r\n",
@@ -146,7 +145,6 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                //TODO: Need to determine a good buffer size for general http messages
                 let mut read_buffer: [u8; 512] = [0; 512];
                 stream.read(&mut read_buffer).unwrap();
 
@@ -166,7 +164,6 @@ fn main() {
     }
 }
 
-//TODO: Do we have to worry about chunked data?
 fn parse_http_message(request: &mut [u8]) -> Option<HttpRequest> {
     let header_info: RequestHeader;
 
@@ -198,6 +195,20 @@ fn parse_http_message(request: &mut [u8]) -> Option<HttpRequest> {
     return Some(result);
 }
 
+//Decode percent encoded values and then return None if we find any ..
+//Don't need to check for ~ due to how we construct our path for resources later
+fn valid_uri(uri: &str) -> Option<String> {
+    match percent_decode_str(uri).decode_utf8() {
+        Ok(decoded_uri) => {
+            match decoded_uri.find("..") {
+                Some(_x) => return None,
+                None => return Some((&decoded_uri).to_string())
+            };
+        },
+        Err(_x) => {return None;}
+    };
+}
+
 //Validates and parses the request line
 fn parse_request_line(header_info: &str) -> Option<RequestLine> {
     let tokens: Vec<&str> = header_info.split(" ").collect();
@@ -218,26 +229,22 @@ fn parse_request_line(header_info: &str) -> Option<RequestLine> {
             _ => { return None; }
         };
 
-        //Need to sanitize and verify this is a correct uri 
-       /* for i in tokens[1].chars() {
-
-        }
-        */
-        result.target = String::from(tokens[1]);
+        match valid_uri(tokens[1]) {
+            Some(decoded_uri) => result.target = decoded_uri,
+            None => return None
+        };
         
         if tokens[2].to_lowercase() != "http/1.1" {
             println!("Wrong version type");
             return None;
         }
         result.version = String::from(tokens[2]);
-    
+        return Some(result);
     } else {
         return None;
     }
-    return Some(result);
 }
 
-//TODO: Verify request line
 fn parse_header_information(headers: &str) -> Option<RequestHeader> {
     let header_lines: Vec<&str> = headers.split("\r\n").collect();
 
@@ -272,7 +279,6 @@ fn file_does_not_exist() -> Vec<u8>{
 }
 
 //TODO: A bit cleaner still needs more work
-//TODO: Probably vulnerable to Path Traversal exploits
 fn build_get_response(config_map: &HashMap<String,String>, request: HttpRequest)  -> HttpResponse {
     let mut path: PathBuf = PathBuf::from((*config_map).get("server_directory").unwrap());
     let mut response: HttpResponse = HttpResponse {
@@ -280,9 +286,12 @@ fn build_get_response(config_map: &HashMap<String,String>, request: HttpRequest)
         payload: None,
     };
     
-    //skip the first forward slash
-    //TODO: Default to {server_directory}/index.html if target is /
-    path.push(&request.header_info.request_line.target[1..]);
+    if request.header_info.request_line.target == "/" {
+        path.push("index.html");
+    } else {
+        //skip the first forward slash
+        path.push(&request.header_info.request_line.target[1..]);
+    }
 
     let file_type: FileType = match path.extension() {
         Some(ext) => {
@@ -315,23 +324,13 @@ fn build_get_response(config_map: &HashMap<String,String>, request: HttpRequest)
         })
     );
 
-    //TODO: Need to clean this up
-    //TODO: Need to construct different response depending on requested content type
     match File::open(&path) {
         Err(_) => {
-            let resp = file_does_not_exist();
-            response.header_info.response_line.reason_phrase = String::from("Not Found");
-            response.header_info.response_line.status_code = 404;
-            response.header_info.header_fields.insert(String::from("Content-Length"), resp.len().to_string());
-            response.payload = Some(resp);
+            return generate_404();
         },
         Ok(mut file) => {
             if file.metadata().unwrap().is_dir() {
-                let resp = file_does_not_exist();
-                response.header_info.response_line.reason_phrase = String::from("Not Found");
-                response.header_info.response_line.status_code = 404;
-                response.header_info.header_fields.insert(String::from("Content-Length"), resp.len().to_string());
-                response.payload = Some(resp);
+                return generate_404();
             }
         
             let mut buf: Vec<u8> = Vec::new();
@@ -341,14 +340,34 @@ fn build_get_response(config_map: &HashMap<String,String>, request: HttpRequest)
                     response.header_info.header_fields.insert(String::from("Content-Length"), num_read.to_string());
                     response.payload = Some(buf);
                 },
-                //TODO: Return http error code
-                Err(e) => {println!("Read failed {}", e.description())}
+                Err(e) => {
+                    println!("Read failed on {}", e.description());
+                    return generate_404();
+                }
             };
         }
     };
     return response;
 }
 
+fn generate_404() -> HttpResponse {
+    let resp = file_does_not_exist();
+    let mut headers: HashMap<String, String> = HashMap::new();
+
+    headers.insert(String::from("Content-Length"), resp.len().to_string());
+
+    return HttpResponse {
+        header_info: ResponseHeader {
+            response_line: ResponseLine {
+                http_version: String::from("HTTP/1.1"),
+                status_code: 404,
+                reason_phrase: String::from("Not Found"),
+            },
+            header_fields: headers
+        },
+        payload: Some(resp)
+    };
+}
 //Temporary helper function for testing
 fn build_test_headers() -> ResponseHeader {
     let mut headers: HashMap<String, String> = HashMap::new();
