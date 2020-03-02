@@ -232,7 +232,7 @@ fn parse_request_line(header_info: &str) -> Option<RequestLine> {
             None => return None
         };
         
-        if tokens[2] != "HTTP/1.1" || tokens[2] != "HTTP/1.0" {
+        if tokens[2] != "HTTP/1.1" && tokens[2] != "HTTP/1.0" {
             println!("Wrong version type {}", tokens[2]);
             return None;
         }
