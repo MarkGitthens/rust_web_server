@@ -17,6 +17,7 @@
     TODO: 1) Add basic threading support
     TODO: 2) Add support for static HTML responses.
     TODO: 3) Determine how much of the HTTP std we need to implement for a bare minimum static server
+    TODO: 4) TLS 1.2 support?
 */
 use std::path::{PathBuf, Path};
 use std::io::prelude::*;
@@ -140,7 +141,7 @@ fn read_config() -> HashMap<String,String>{
 fn main() {
     let config_data: HashMap<String, String> = read_config();
 
-    let listener: TcpListener = TcpListener::bind("localhost:8080").unwrap();
+    let listener: TcpListener = TcpListener::bind("0.0.0.0:8000").unwrap();
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
@@ -231,8 +232,8 @@ fn parse_request_line(header_info: &str) -> Option<RequestLine> {
             None => return None
         };
         
-        if tokens[2] != "HTTP/1.1" {
-            println!("Wrong version type");
+        if tokens[2] != "HTTP/1.1" || tokens[2] != "HTTP/1.0" {
+            println!("Wrong version type {}", tokens[2]);
             return None;
         }
         result.version = String::from(tokens[2]);
