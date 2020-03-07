@@ -1,12 +1,3 @@
-// Limiting the scope of this project. Planned features
-/*  1) Bare minimum static web server.(With support for JS, png, jpeg, html, maybe more later)
-        a) Support for locally hosted HTML 
-        b) return image resources of png and jpeg types
-        c) return locally hosted JS files
-    2) HTTP error code responses for when something erroneous occurs (Accessing missing resource)
-    3) Ideally have some basic threading support to allow for many simultaneous requests from users
-*/
-
 /* Things this project will NOT do
     1) Provide dynamic data (AKA don't expect to handle RESTful api calls)
     2) Provide any sort of user authentication
