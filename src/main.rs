@@ -13,12 +13,7 @@
     3) Store any user data outside of whats required (ip, http requests,etc)
     4) Provide routing services to other applications/services
 */
-/*
-    TODO: 1) Add basic threading support
-    TODO: 2) Add support for static HTML responses.
-    TODO: 3) Determine how much of the HTTP std we need to implement for a bare minimum static server
-    TODO: 4) TLS 1.2 support?
-*/
+
 use std::path::{PathBuf, Path};
 use std::io::prelude::*;
 use std::net::TcpListener;
@@ -153,8 +148,21 @@ fn main() {
                         let mut response: HttpResponse = build_get_response(&config_data, msg);
                         stream.write_all(&response.serialize()[..]).unwrap();  
                     },
-                    //TODO: Send 400 malformed request error message
-                    None => println!("Couldn't parse http message"),
+                    None => {
+                        let mut result = HttpResponse {
+                            header_info: ResponseHeader {
+                                response_line:  ResponseLine {
+                                    http_version: String::from("HTTP/1.1"),
+                                    status_code: 400,
+                                    reason_phrase: String::from("Invalid Request")
+                                },
+                                header_fields: HashMap::new(),
+                            },
+                            payload: None
+                        };
+
+                        stream.write_all(&result.serialize()[..]).unwrap();
+                    }
                 };                                            
             }
             Err(e) => {
@@ -187,7 +195,6 @@ fn parse_http_message(request: &mut [u8]) -> Option<HttpRequest> {
             Some(result)
         },
         None => {
-            println!("Couldn't parse header information");
             None
         }
     }
@@ -248,7 +255,6 @@ fn parse_header_information(headers: &str) -> Option<RequestHeader> {
 
     match parse_request_line(header_lines[0]) {
         Some(req_line) =>  {
-            //TODO: Add sanity checking and return proper error code if invalid data
             let mut result: RequestHeader = RequestHeader {
                 request_line: req_line,
                 header_fields: HashMap::new(),
@@ -269,12 +275,10 @@ fn parse_header_information(headers: &str) -> Option<RequestHeader> {
     }
 }
 
-//TODO: We should have this grab info from a user defined error file
 fn file_does_not_exist() -> Vec<u8>{
     String::from("<!DOCTYPE html><html><head><title>GET response</title></head><body>Couldn't find file</body></html>").as_bytes().to_vec()
 }
 
-//TODO: A bit cleaner still needs more work
 fn build_get_response(config_map: &HashMap<String,String>, request: HttpRequest)  -> HttpResponse {
     let mut path: PathBuf = PathBuf::from((*config_map).get("server_directory").unwrap());
     let mut response: HttpResponse = HttpResponse {
