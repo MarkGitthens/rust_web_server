@@ -10,7 +10,6 @@ use std::io::prelude::*;
 use std::net::TcpListener;
 use std::collections::HashMap;
 use std::fs::File;
-use std::error::Error;
 use percent_encoding::{percent_decode_str};
 
 enum FileType {
@@ -95,13 +94,13 @@ fn read_config() -> HashMap<String,String>{
     let config_path = Path::new("config.txt");
     let mut config_file = match File::open(config_path) {
         Ok(contents) => contents,
-        Err(e) => panic!("Couldn't open config file! {}", e.description())
+        Err(e) => panic!("Couldn't open config file! {}", e)
     };
 
     let mut file_contents: String = String::new();
     match config_file.read_to_string(&mut file_contents) {
         Ok(_bytes_read) => (),
-        Err(e) => panic!("Couldn't read file contents! {}", e.description())
+        Err(e) => panic!("Couldn't read file contents! {}", e)
     };
 
     let split_lines: Vec<&str> = file_contents.split('\n').collect::<Vec<&str>>();
@@ -332,7 +331,7 @@ fn build_get_response(config_map: &HashMap<String,String>, request: HttpRequest)
                     response.payload = Some(buf);
                 },
                 Err(e) => {
-                    println!("Read failed on {}", e.description());
+                    println!("Read failed on {}", e);
                     return generate_404();
                 }
             };
