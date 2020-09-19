@@ -1,1 +1,1 @@
-server_directory = /home/mark/test_server/html/static
+server_directory = src/html/static/
